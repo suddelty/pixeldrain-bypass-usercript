@@ -11,6 +11,9 @@ The "Show Bypass Links" button is kinda buggy for now, especially when using it 
 It works best when you aren't viewing a specific file in the folder. If you are, click this button and refresh the page 
 ![Image showing button](https://i.imgur.com/RoEzoh1.png)
 
+Also, a user reported that certain vpn providers might block access to the bypass website making it impossible for the usercript to work.
+I would advise against disabling the vpn, but just know that this is a possible cause for the usercript to fail.
+
 ### TODO
 - ~~Fix show bypass links on single files~~
 - Store all the links on page load
