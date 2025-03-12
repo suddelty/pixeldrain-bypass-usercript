@@ -1,5 +1,8 @@
 # Pixeldrain Download Limit Bypass
 
+### Install
+You can install the extension using this [link](https://github.com/MegaLime0/pixeldrain-bypass-usercript/raw/refs/heads/main/bypass_script.user.js)
+
 ### Usage
 After enabling this script, two extra buttons will appear on the Pixeldrain download site, in the left side menu.
 The first button "Download Bypass" will start downloading the file using the bypass link.
