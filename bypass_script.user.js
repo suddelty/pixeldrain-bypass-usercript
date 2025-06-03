@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Pixeldrain Download Bypass
 // @namespace    http://tampermonkey.net/
-// @version      1.6.3
+// @version      1.7.0
 // @description  Bypass Pixeldrain Download Limit
-// @author       MegaLime0, honey, Nurarihyon
+// @author       MegaLime0, honey, Nurarihyon, suddelty
 // @match        https://pixeldrain.com/*
 // @match        https://cdn.pd8.workers.dev/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=pixeldrain.com
 // @grant        GM_openInTab
-// @downloadURL https://update.greasyfork.org/scripts/491326/Pixeldrain%20Download%20Bypass.user.js
-// @updateURL https://update.greasyfork.org/scripts/491326/Pixeldrain%20Download%20Bypass.meta.js
+// @downloadURL https://github.com/suddelty/pixeldrain-bypass-usercript/raw/refs/heads/main/bypass_script.user.js
+// @updateURL   https://github.com/suddelty/pixeldrain-bypass-usercript/raw/refs/heads/main/bypass_script.user.js
 // ==/UserScript==
 
 (function() {
@@ -17,54 +17,406 @@
 
     const bypassUrl = "https://pd.cybar.xyz/";
     const idRegex = /\/api\/file\/(\w+)\//;
+    
+    // Global storage for cached links
+    let cachedLinks = {
+        bypassUrlList: [],
+        bypassUrlNames: [],
+        lastCachedUrl: '',
+        isGallery: false
+    };
 
+    // Cache links on page load
+    function cacheLinksOnLoad() {
+        const currentUrl = window.location.href;
+        console.log('Caching links for URL:', currentUrl);
+        
+        // Check if it's a gallery with a specific item selected (e.g., #item=0)
+        const isGalleryWithItem = currentUrl.includes("https://pixeldrain.com/l/") && currentUrl.includes("#item=");
+        
+        if (currentUrl.includes("https://pixeldrain.com/u/") || isGalleryWithItem) {
+            // Single file page or gallery with specific item
+            cachedLinks.isGallery = false;
+            cachedLinks.lastCachedUrl = currentUrl;
+            
+            let id;
+            if (isGalleryWithItem) {
+                // Extract file ID from the currently displayed file in gallery
+                id = getFileIdFromGalleryItem();
+            } else {
+                // Regular single file URL
+                id = extractFileIdFromUrl(currentUrl);
+            }
+            
+            if (id) {
+                cachedLinks.bypassUrlList = [bypassUrl + id];
+                cachedLinks.bypassUrlNames = [getFileNameFromPage() || id];
+                console.log('Cached single file:', cachedLinks);
+            } else {
+                console.log('Could not extract file ID from URL:', currentUrl);
+            }
+        } else if (currentUrl.includes("https://pixeldrain.com/l/")) {
+            // Gallery page (without specific item)
+            cachedLinks.isGallery = true;
+            cachedLinks.lastCachedUrl = currentUrl;
+            const result = getBypassUrls("gallery");
+            if (result) {
+                cachedLinks.bypassUrlList = result.bypassUrlList;
+                cachedLinks.bypassUrlNames = result.bypassUrlNames;
+                console.log('Cached gallery files:', cachedLinks.bypassUrlList.length, 'files');
+            }
+        }
+    }
 
+    // Get file ID from currently displayed gallery item
+    function getFileIdFromGalleryItem() {
+        // Try to get from the main displayed image/video
+        const mainImage = document.querySelector('img[src*="/api/file/"]') || 
+                         document.querySelector('[style*="background-image"][style*="/api/file/"]') ||
+                         document.querySelector('video source[src*="/api/file/"]') ||
+                         document.querySelector('[src*="/api/file/"]');
+        
+        if (mainImage) {
+            const src = mainImage.src || mainImage.style.backgroundImage || '';
+            const match = src.match(/\/api\/file\/(\w+)/);
+            if (match) {
+                console.log('Extracted file ID from main image:', match[1]);
+                return match[1];
+            }
+        }
+        
+        // Try to get from URL hash if it contains item info
+        const hash = window.location.hash;
+        if (hash.includes('#item=')) {
+            // Try to find the corresponding file in the gallery
+            const itemIndex = parseInt(hash.replace('#item=', ''));
+            const galleryFiles = document.querySelectorAll('a.file');
+            
+            if (galleryFiles[itemIndex]) {
+                const fileLink = galleryFiles[itemIndex];
+                const childDiv = fileLink.querySelector('div');
+                if (childDiv) {
+                    const backgroundUrl = childDiv.style.backgroundImage;
+                    const match = backgroundUrl.match(idRegex);
+                    if (match && match.length > 1) {
+                        console.log('Extracted file ID from gallery item at index', itemIndex, ':', match[1]);
+                        return match[1];
+                    }
+                }
+            }
+        }
+        
+        // Fallback: try to extract from any visible file element
+        const visibleFile = document.querySelector('[class*="active"] [style*="/api/file/"]') ||
+                           document.querySelector('[class*="selected"] [style*="/api/file/"]') ||
+                           document.querySelector('.file [style*="/api/file/"]');
+        
+        if (visibleFile) {
+            const style = visibleFile.style.backgroundImage || '';
+            const match = style.match(idRegex);
+            if (match && match.length > 1) {
+                console.log('Extracted file ID from visible file element:', match[1]);
+                return match[1];
+            }
+        }
+        
+        console.log('Could not extract file ID from gallery item');
+        return null;
+    }
+
+    // Extract file ID from various URL formats
+    function extractFileIdFromUrl(url) {
+        // Handle /u/fileId format
+        const uMatch = url.match(/\/u\/([a-zA-Z0-9_-]+)/);
+        if (uMatch) {
+            return uMatch[1];
+        }
+        
+        // Handle any other formats that might exist
+        const generalMatch = url.match(/pixeldrain\.com\/[^\/]*\/([a-zA-Z0-9_-]+)/);
+        if (generalMatch) {
+            return generalMatch[1];
+        }
+        
+        return null;
+    }
+
+    // Get file name from the page title or other elements
+    function getFileNameFromPage() {
+        // Try to get filename from page title
+        const title = document.title;
+        if (title && title !== 'Pixeldrain') {
+            return title.replace(' - Pixeldrain', '');
+        }
+        
+        // Try to get from the main heading
+        const mainHeading = document.querySelector('h1') || document.querySelector('.title') || document.querySelector('[class*="title"]');
+        if (mainHeading && mainHeading.textContent.trim()) {
+            return mainHeading.textContent.trim();
+        }
+        
+        // Try to get from breadcrumb or other page elements
+        const breadcrumb = document.querySelector('.breadcrumb span:last-child');
+        if (breadcrumb) {
+            return breadcrumb.textContent.trim();
+        }
+        
+        // Try to get from meta tags
+        const metaTitle = document.querySelector('meta[property="og:title"]');
+        if (metaTitle) {
+            return metaTitle.getAttribute('content').replace(' - Pixeldrain', '');
+        }
+        
+        return null;
+    }
+
+    // Enhanced function to get bypass URLs with better file name extraction
     function getBypassUrls(urlType) {
         const currentUrl = window.location.href;
 
         if (urlType == "file") {
-            const id = currentUrl.replace("https://pixeldrain.com/u/", "");
-            const alteredUrl = bypassUrl + id;
-
-            return alteredUrl;
+            const isGalleryWithItem = currentUrl.includes("https://pixeldrain.com/l/") && currentUrl.includes("#item=");
+            
+            let id;
+            if (isGalleryWithItem) {
+                id = getFileIdFromGalleryItem();
+            } else {
+                id = extractFileIdFromUrl(currentUrl);
+            }
+            
+            if (id) {
+                const alteredUrl = bypassUrl + id;
+                console.log('Generated bypass URL for file:', alteredUrl);
+                return alteredUrl;
+            }
+            return null;
         }
 
         if (urlType == "gallery") {
             const links = document.querySelectorAll('a.file');
-
             const bypassUrlList = [];
             const bypassUrlNames = [];
 
             links.forEach((link) => {
                 const childDiv = link.querySelector('div');
+                if (!childDiv) return;
+                
                 const backgroundUrl = childDiv.style.backgroundImage;
-
                 const match = backgroundUrl.match(idRegex);
 
                 if (match && match.length > 1) {
                     const alteredUrl = bypassUrl + match[1];
                     bypassUrlList.push(alteredUrl);
-                    bypassUrlNames.push(link.textContent);
+                    
+                    // Extract filename more reliably
+                    let fileName = link.textContent.trim();
+                    if (!fileName) {
+                        // Fallback to ID if no text content
+                        fileName = match[1];
+                    }
+                    bypassUrlNames.push(fileName);
                 }
             });
 
+            console.log('Generated bypass URLs for gallery:', bypassUrlList.length, 'files');
             return {bypassUrlList, bypassUrlNames};
         }
     }
 
-    function handleButtonClick() {
-        const currentUrl = window.location.href;
+    // Update cached links when gallery content changes
+    function updateCachedLinks() {
+        if (cachedLinks.isGallery) {
+            const result = getBypassUrls("gallery");
+            if (result) {
+                cachedLinks.bypassUrlList = result.bypassUrlList;
+                cachedLinks.bypassUrlNames = result.bypassUrlNames;
+            }
+        }
+    }
 
-        if (currentUrl.includes("https://pixeldrain.com/u/")) {
-            const alteredUrl = getBypassUrls("file");
-            startDownload(alteredUrl);
+    // Insert buttons into the page structure
+    function insertButtons() {
+        // Remove existing buttons if they exist
+        const existingDownloadBtn = document.getElementById('bypass-download-btn');
+        const existingLinksBtn = document.getElementById('bypass-links-btn');
+        if (existingDownloadBtn) existingDownloadBtn.remove();
+        if (existingLinksBtn) existingLinksBtn.remove();
+
+        // Create buttons
+        const button = document.createElement("button");
+        button.id = 'bypass-download-btn';
+        const downloadIcon = document.createElement("a");
+        downloadIcon.className = "icon";
+        downloadIcon.textContent = "download";
+        downloadIcon.style.color = "#d7dde8";
+        const downloadButtonText = document.createElement("span");
+        downloadButtonText.textContent = "Download Bypass";
+        button.appendChild(downloadIcon);
+        button.appendChild(downloadButtonText);
+
+        const linksButton = document.createElement("button");
+        linksButton.id = 'bypass-links-btn';
+        const linksIcon = document.createElement("i");
+        linksIcon.className = "icon";
+        linksIcon.textContent = "link";
+        const linksButtonText = document.createElement("span");
+        linksButtonText.textContent = "Show Bypass Links";
+        linksButton.appendChild(linksIcon);
+        linksButton.appendChild(linksButtonText);
+
+        // Add event listeners
+        button.addEventListener('click', handleButtonClick);
+        linksButton.addEventListener('click', handleLinksButtonClick);
+
+        // Try insertion strategies in order of preference
+        let buttonsInserted = false;
+
+        // Strategy 1: Look for Size label (original method - most reliable)
+        const labels = document.querySelectorAll('div.label');
+        labels.forEach(label => {
+            if (label.textContent.trim() === 'Size' && !buttonsInserted) {
+                const nextElement = label.nextElementSibling;
+                if (nextElement) {
+                    nextElement.insertAdjacentElement('afterend', linksButton);
+                    nextElement.insertAdjacentElement('afterend', button);
+                    buttonsInserted = true;
+                }
+            }
+        });
+
+        // Strategy 2: Find the left sidebar and append to it
+        if (!buttonsInserted) {
+            const sidebar = document.querySelector('nav.sidebar') || 
+                           document.querySelector('.sidebar') || 
+                           document.querySelector('aside') ||
+                           document.querySelector('nav');
+            
+            if (sidebar) {
+                const buttonContainer = document.createElement('div');
+                buttonContainer.style.padding = '10px';
+                buttonContainer.style.borderTop = '1px solid #555';
+                buttonContainer.appendChild(button);
+                buttonContainer.appendChild(linksButton);
+                sidebar.appendChild(buttonContainer);
+                buttonsInserted = true;
+            }
         }
 
-        if (currentUrl.includes("https://pixeldrain.com/l/")) {
-            const links = getBypassUrls("gallery").bypassUrlList;
+        // Strategy 3: Fixed position fallback (always works)
+        if (!buttonsInserted) {
+            const buttonContainer = document.createElement('div');
+            buttonContainer.style.position = 'fixed';
+            buttonContainer.style.top = '10px';
+            buttonContainer.style.right = '10px';
+            buttonContainer.style.zIndex = '1000';
+            buttonContainer.style.backgroundColor = '#2f3541';
+            buttonContainer.style.padding = '10px';
+            buttonContainer.style.borderRadius = '5px';
+            buttonContainer.style.border = '1px solid #555';
+            buttonContainer.appendChild(button);
+            buttonContainer.appendChild(linksButton);
+            document.body.appendChild(buttonContainer);
+            buttonsInserted = true;
+        }
 
+        console.log('Bypass buttons inserted:', buttonsInserted);
+        return buttonsInserted;
+    }
+
+    // Add event listeners for gallery navigation
+    function addGalleryEventListeners() {
+        // Listen for clicks on gallery files
+        const galleryFiles = document.querySelectorAll('a.file');
+        galleryFiles.forEach(fileLink => {
+            // Remove existing listeners to prevent duplicates
+            fileLink.removeEventListener('click', handleGalleryFileClick);
+            fileLink.addEventListener('click', handleGalleryFileClick);
+        });
+
+        // Listen for gallery button clicks (top navigation)
+        const galleryButton = document.querySelector('a[href*="/l/"]');
+        if (galleryButton) {
+            galleryButton.removeEventListener('click', handleGalleryButtonClick);
+            galleryButton.addEventListener('click', handleGalleryButtonClick);
+        }
+
+        // Listen for thumbnail navigation (the small images at the top)
+        const thumbnails = document.querySelectorAll('a[href*="/u/"]');
+        thumbnails.forEach(thumb => {
+            thumb.removeEventListener('click', handleGalleryFileClick);
+            thumb.addEventListener('click', handleGalleryFileClick);
+        });
+
+        // Listen for browser back/forward navigation
+        window.removeEventListener('popstate', handlePopStateChange);
+        window.addEventListener('popstate', handlePopStateChange);
+    }
+
+    // Separate event handlers for better control
+    function handleGalleryFileClick(event) {
+        console.log('Gallery file clicked');
+        setTimeout(() => {
+            insertButtons();
+            cacheLinksOnLoad();  // Cache first, then update buttons
+            updateButtonsForCurrentPage();
+        }, 300);
+    }
+
+    function handleGalleryButtonClick(event) {
+        console.log('Gallery button clicked');
+        setTimeout(() => {
+            insertButtons();
+            cacheLinksOnLoad();  // Cache first, then update buttons
+            updateButtonsForCurrentPage();
+        }, 300);
+    }
+
+    function handlePopStateChange(event) {
+        console.log('Page navigation detected');
+        setTimeout(() => {
+            insertButtons();
+            cacheLinksOnLoad();  // Cache first, then update buttons
+            updateButtonsForCurrentPage();
+        }, 300);
+    }
+
+    function handleButtonClick() {
+        const currentUrl = window.location.href;
+        console.log('Download button clicked for URL:', currentUrl);
+
+        // Check if it's a gallery with a specific item selected
+        const isGalleryWithItem = currentUrl.includes("https://pixeldrain.com/l/") && currentUrl.includes("#item=");
+
+        if (currentUrl.includes("https://pixeldrain.com/u/") || isGalleryWithItem) {
+            // Use cached link if available, otherwise generate new one
+            let alteredUrl;
+            if (cachedLinks.lastCachedUrl === currentUrl && cachedLinks.bypassUrlList.length > 0) {
+                alteredUrl = cachedLinks.bypassUrlList[0];
+            } else {
+                alteredUrl = getBypassUrls("file");
+            }
+            
+            if (alteredUrl) {
+                console.log('Starting download for:', alteredUrl);
+                startDownload(alteredUrl);
+            } else {
+                console.error('Could not generate bypass URL for single file');
+            }
+        }
+
+        if (currentUrl.includes("https://pixeldrain.com/l/") && !isGalleryWithItem) {
+            // Use cached links if available, otherwise generate new ones
+            let links;
+            if (cachedLinks.lastCachedUrl === currentUrl && cachedLinks.bypassUrlList.length > 0) {
+                links = cachedLinks.bypassUrlList;
+            } else {
+                const result = getBypassUrls("gallery");
+                links = result ? result.bypassUrlList : [];
+            }
+
+            console.log('Starting downloads for', links.length, 'files');
             links.forEach((link) => {
-                startDownload(link)
+                startDownload(link);
             });
         }
     }
@@ -92,30 +444,110 @@
         popupBox.appendChild(popupClose);
 
         const currentUrl = window.location.href;
+        console.log('Show links button clicked for URL:', currentUrl);
+        
+        // Check if it's a gallery with a specific item selected
+        const isGalleryWithItem = currentUrl.includes("https://pixeldrain.com/l/") && currentUrl.includes("#item=");
+        
+        // Use cached links if available and current, otherwise generate fresh ones
+        let bypassLinks, bypassNames;
+        
+        if (cachedLinks.lastCachedUrl === currentUrl && cachedLinks.bypassUrlList.length > 0) {
+            bypassLinks = cachedLinks.bypassUrlList;
+            bypassNames = cachedLinks.bypassUrlNames;
+            console.log('Using cached links:', bypassLinks.length, 'files');
+        } else {
+            console.log('Generating fresh links...');
+            // Fallback to real-time fetching
+            if (currentUrl.includes("https://pixeldrain.com/u/") || isGalleryWithItem) {
+                const alteredUrl = getBypassUrls("file");
+                if (alteredUrl) {
+                    bypassLinks = [alteredUrl];
+                    bypassNames = [getFileNameFromPage() || alteredUrl.split('/').pop()];
+                } else {
+                    bypassLinks = [];
+                    bypassNames = [];
+                }
+            } else if (currentUrl.includes("https://pixeldrain.com/l/")) {
+                const result = getBypassUrls("gallery");
+                bypassLinks = result ? result.bypassUrlList : [];
+                bypassNames = result ? result.bypassUrlNames : [];
+            } else {
+                bypassLinks = [];
+                bypassNames = [];
+            }
+            console.log('Generated fresh links:', bypassLinks.length, 'files');
+        }
 
-        if (currentUrl.includes("https://pixeldrain.com/u/")) {
-            const alteredUrl = getBypassUrls("file");
-            const urlElement = document.createElement("a");
-            urlElement.href = alteredUrl;
-            urlElement.textContent = alteredUrl;
+        // Add a message if no links are found
+        if (!bypassLinks || bypassLinks.length === 0) {
+            const noLinksMessage = document.createElement("div");
+            noLinksMessage.textContent = "No bypass links found. Make sure you're on a file or gallery page.";
+            noLinksMessage.style.color = "#ff6b6b";
+            noLinksMessage.style.textAlign = "center";
+            noLinksMessage.style.padding = "20px";
+            popupBox.appendChild(noLinksMessage);
+            popupBox.style.display = 'block';
+            return;
+        }
+
+        // Display single file (including gallery items)
+        if (currentUrl.includes("https://pixeldrain.com/u/") || isGalleryWithItem) {
+            const urlElement = document.createElement("div");
+            urlElement.style.marginBottom = "10px";
+            urlElement.style.padding = "10px";
+            urlElement.style.border = "1px solid #555";
+            urlElement.style.borderRadius = "5px";
+            urlElement.style.backgroundColor = "#3a4149";
+            
+            const fileName = document.createElement("div");
+            fileName.textContent = bypassNames[0] || "Unknown File";
+            fileName.style.fontWeight = "bold";
+            fileName.style.marginBottom = "5px";
+            fileName.style.color = "#a4be8c";
+            
+            const urlLink = document.createElement("a");
+            urlLink.href = bypassLinks[0];
+            urlLink.textContent = bypassLinks[0];
+            urlLink.style.color = "#88c0d0";
+            urlLink.style.textDecoration = "none";
+            urlLink.style.wordBreak = "break-all";
+            
+            urlElement.appendChild(fileName);
+            urlElement.appendChild(urlLink);
             popupBox.appendChild(urlElement);
         }
 
-        if (currentUrl.includes("https://pixeldrain.com/l/")) {
-            let result = getBypassUrls("gallery");
-            let bypassLinks = result.bypassUrlList;
-            let bypassNames = result.bypassUrlNames;
-
+        // Display gallery (only when not viewing a specific item)
+        if (currentUrl.includes("https://pixeldrain.com/l/") && !isGalleryWithItem) {
             const linksContainer = document.createElement("div");
-            linksContainer.style.maxHeight = "calc(100% - 40px)";
+            linksContainer.style.maxHeight = "calc(100% - 80px)";
             linksContainer.style.overflowY = "auto";
             linksContainer.style.paddingBottom = "10px";
 
-            bypassLinks.forEach((link) => {
-                const urlElement = document.createElement("a");
-                urlElement.href = link;
-                urlElement.textContent = link;
-                urlElement.style.display = "block";
+            bypassLinks.forEach((link, index) => {
+                const urlElement = document.createElement("div");
+                urlElement.style.marginBottom = "10px";
+                urlElement.style.padding = "10px";
+                urlElement.style.border = "1px solid #555";
+                urlElement.style.borderRadius = "5px";
+                urlElement.style.backgroundColor = "#3a4149";
+                
+                const fileName = document.createElement("div");
+                fileName.textContent = bypassNames[index] || `File ${index + 1}`;
+                fileName.style.fontWeight = "bold";
+                fileName.style.marginBottom = "5px";
+                fileName.style.color = "#a4be8c";
+                
+                const urlLink = document.createElement("a");
+                urlLink.href = link;
+                urlLink.textContent = link;
+                urlLink.style.color = "#88c0d0";
+                urlLink.style.textDecoration = "none";
+                urlLink.style.wordBreak = "break-all";
+                
+                urlElement.appendChild(fileName);
+                urlElement.appendChild(urlLink);
                 linksContainer.appendChild(urlElement);
             });
 
@@ -132,14 +564,14 @@
             buttonContainer.style.marginTop = '10px';
 
             const copyButton = document.createElement('button');
-            copyButton.textContent = '🔗 Copy URL';
+            copyButton.textContent = '🔗 Copy URLs';
             copyButton.style.marginRight = '5px';
             copyButton.addEventListener('click', function() {
                 const urls = bypassLinks.join('\n');
                 navigator.clipboard.writeText(urls).then(function() {
                     copyButton.textContent = "✔️ Copied";
                     setTimeout(function() {
-                        copyButton.textContent = '🔗 Copy URL';
+                        copyButton.textContent = '🔗 Copy URLs';
                     }, 2500);
                 }, function(err) {
                     console.error('Failed to copy URLs: ', err);
@@ -147,35 +579,50 @@
             });
             buttonContainer.appendChild(copyButton);
 
+            const copyWithNamesButton = document.createElement('button');
+            copyWithNamesButton.textContent = '📝 Copy with Names';
+            copyWithNamesButton.style.marginLeft = '5px';
+            copyWithNamesButton.style.marginRight = '5px';
+            copyWithNamesButton.addEventListener('click', function() {
+                let content = '';
+                bypassLinks.forEach((link, index) => {
+                    content += `${bypassNames[index] || `File ${index + 1}`}: ${link}\n`;
+                });
+                navigator.clipboard.writeText(content.trim()).then(function() {
+                    copyWithNamesButton.textContent = "✔️ Copied";
+                    setTimeout(function() {
+                        copyWithNamesButton.textContent = '📝 Copy with Names';
+                    }, 2500);
+                }, function(err) {
+                    console.error('Failed to copy URLs with names: ', err);
+                });
+            });
+            buttonContainer.appendChild(copyWithNamesButton);
+
             const saveButton = document.createElement('button');
             saveButton.textContent = '📄 Save as Text File';
             saveButton.style.marginLeft = '5px';
             saveButton.addEventListener('click', function() {
-                const popupContent = document.getElementById('popupBox').querySelectorAll('a');
-                if (popupContent.length > 0) {
-                    const currentUrl = window.location.href;
-                    const fileIdMatch = currentUrl.match(/\/l\/([^/#?]+)/);
-                    if (fileIdMatch && fileIdMatch.length > 1) {
-                        const fileId = fileIdMatch[1];
-                        const fileName = fileId + '.txt';
-                        let content = '';
-                        popupContent.forEach((link) => {
-                            content += link.href + '\n';
-                        });
-                        const blob = new Blob([content.trim()], { type: 'text/plain' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = fileName;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                    } else {
-                        console.error('Failed to extract file identifier from URL.');
-                    }
+                const currentUrl = window.location.href;
+                const fileIdMatch = currentUrl.match(/\/l\/([^/#?]+)/);
+                if (fileIdMatch && fileIdMatch.length > 1) {
+                    const fileId = fileIdMatch[1];
+                    const fileName = fileId + '.txt';
+                    let content = '';
+                    bypassLinks.forEach((link, index) => {
+                        content += `${bypassNames[index] || `File ${index + 1}`}: ${link}\n`;
+                    });
+                    const blob = new Blob([content.trim()], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
                 } else {
-                    console.error('Popup content not found.');
+                    console.error('Failed to extract file identifier from URL.');
                 }
             });
             buttonContainer.appendChild(saveButton);
@@ -186,33 +633,40 @@
         popupBox.style.display = 'block';
     }
 
+    // Update buttons visibility and functionality based on current page
+    function updateButtonsForCurrentPage() {
+        const currentUrl = window.location.href;
+        const downloadButton = document.getElementById('bypass-download-btn');
+        const linksButton = document.getElementById('bypass-links-btn');
+        
+        if (downloadButton && linksButton) {
+            const isGalleryWithItem = currentUrl.includes("https://pixeldrain.com/l/") && currentUrl.includes("#item=");
+            const isGalleryMainPage = currentUrl.includes("https://pixeldrain.com/l/") && !currentUrl.includes("#item=");
+            const isSingleFile = currentUrl.includes("https://pixeldrain.com/u/");
+            
+            if (isSingleFile || isGalleryWithItem) {
+                // Show both buttons for single files and gallery items
+                downloadButton.style.display = 'block';
+                linksButton.style.display = 'block';
+            } else if (isGalleryMainPage) {
+                // Hide download button on gallery main page, show links button
+                downloadButton.style.display = 'none';
+                linksButton.style.display = 'block';
+            } else {
+                // Hide both buttons on other pages
+                downloadButton.style.display = 'none';
+                linksButton.style.display = 'none';
+            }
+        }
+    }
+
     if (window.location.href.includes('pixeldrain.com')) {
-        const button = document.createElement("button");
-        const downloadIcon = document.createElement("a");
-        downloadIcon.className = "icon";
-        downloadIcon.textContent = "download";
-        downloadIcon.style.color = "#d7dde8";
-        const downloadButtonText = document.createElement("span");
-        downloadButtonText.textContent = "Download Bypass";
-        button.appendChild(downloadIcon);
-        button.appendChild(downloadButtonText);
-
-        const linksButton = document.createElement("button");
-        const linksIcon = document.createElement("i");
-        linksIcon.className = "icon";
-        linksIcon.textContent = "link";
-        const linksButtonText = document.createElement("span");
-        linksButtonText.textContent = "Show Bypass Links";
-        linksButton.appendChild(linksIcon);
-        linksButton.appendChild(linksButtonText);
-
         const popupBox = document.createElement("div");
         popupBox.style.zIndex = 20;
         popupBox.style.whiteSpace = "pre-line";
         popupBox.id = "popupBox";
         popupBox.style.display = "none";
         popupBox.style.position = "fixed";
-
         popupBox.style.top = "50%";
         popupBox.style.left = "50%";
         popupBox.style.transform = "translate(-50%, -50%)";
@@ -221,25 +675,79 @@
         popupBox.style.border = "2px solid #a4be8c";
         popupBox.style.color = "#d7dde8";
         popupBox.style.borderRadius = "10px";
-        popupBox.style.width = "30%";
+        popupBox.style.width = "40%";
         popupBox.style.height = "auto";
-        popupBox.style.maxWidth = "600px";
+        popupBox.style.maxWidth = "700px";
+        popupBox.style.maxHeight = "80vh";
 
-        button.addEventListener('click', handleButtonClick);
-        linksButton.addEventListener('click', handleLinksButtonClick);
+        document.body.appendChild(popupBox);
 
-        const labels = document.querySelectorAll('div.label');
-        labels.forEach(label => {
-            if (label.textContent.trim() === 'Size') {
-                const nextElement = label.nextElementSibling;
-                if (nextElement) {
-                    nextElement.insertAdjacentElement('afterend', linksButton);
-                    nextElement.insertAdjacentElement('afterend', button);
+        // Close popup when clicking outside of it
+        document.addEventListener('click', function(event) {
+            if (popupBox.style.display === 'block') {
+                // Check if the click is outside the popup box
+                if (!popupBox.contains(event.target)) {
+                    // Also check if the click is not on the "Show Bypass Links" button
+                    const linksButton = document.getElementById('bypass-links-btn');
+                    if (!linksButton || !linksButton.contains(event.target)) {
+                        popupBox.style.display = 'none';
+                    }
                 }
             }
         });
 
-        document.body.appendChild(popupBox);
+        // Initialize everything
+        insertButtons();
+        cacheLinksOnLoad();
+        addGalleryEventListeners();
+        updateButtonsForCurrentPage();
+
+        // Re-initialize when page content changes (for SPA navigation)
+        const observer = new MutationObserver(function(mutations) {
+            let shouldReinitialize = false;
+            
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    // Check if significant content was added
+                    const hasNewContent = Array.from(mutation.addedNodes).some(node => 
+                        node.nodeType === 1 && (
+                            (node.matches && (
+                                node.matches('a.file') || 
+                                node.matches('[class*="content"]') ||
+                                node.matches('main') ||
+                                node.matches('.sidebar') ||
+                                node.matches('nav')
+                            )) ||
+                            (node.querySelector && (
+                                node.querySelector('a.file') ||
+                                node.querySelector('[class*="content"]') ||
+                                node.querySelector('main') ||
+                                node.querySelector('.sidebar') ||
+                                node.querySelector('nav')
+                            ))
+                        )
+                    );
+                    
+                    if (hasNewContent) {
+                        shouldReinitialize = true;
+                    }
+                }
+            });
+
+            if (shouldReinitialize) {
+                setTimeout(() => {
+                    insertButtons();
+                    addGalleryEventListeners();
+                    cacheLinksOnLoad();
+                    updateButtonsForCurrentPage();
+                }, 200);
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
 
         function positionPopupBox(popupBox) {
             const popupRect = popupBox.getBoundingClientRect();
