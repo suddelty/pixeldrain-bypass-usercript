@@ -10,6 +10,7 @@ Once the script is installed, you'll see two additional buttons in the left side
 - **"Show Bypass Links"** - Opens a popup displaying bypass URLs for the current file or all files in a gallery
 
 **For single files:** Both buttons work with the currently viewed file.
+
 **For galleries:** The download button only appears when viewing a specific file. Use "Show Bypass Links" to see all files in the gallery.
 
 ### Important Notes
